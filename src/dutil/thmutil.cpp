@@ -40,6 +40,7 @@ const DWORD GROW_FONT_INSTANCES = 3;
 const DWORD GROW_WINDOW_TEXT = 250;
 const LPCWSTR THEME_WC_HYPERLINK = L"ThemeHyperLink";
 const LPCWSTR THEME_WC_PANEL = L"ThemePanel";
+const LPCWSTR THEME_WC_IMAGE = L"ThemeImage";
 
 static Gdiplus::GdiplusStartupInput vgsi;
 static Gdiplus::GdiplusStartupOutput vgso = { };
@@ -47,6 +48,8 @@ static ULONG_PTR vgdiToken = 0;
 static ULONG_PTR vgdiHookToken = 0;
 static HMODULE vhHyperlinkRegisteredModule = NULL;
 static HMODULE vhPanelRegisteredModule = NULL;
+static HMODULE vhImageRegisteredModule = NULL;
+static WNDPROC vpfnImageWndProc = NULL;
 static HMODULE vhModuleMsftEdit = NULL;
 static HMODULE vhModuleRichEd = NULL;
 static HCURSOR vhCursorHand = NULL;
@@ -348,6 +351,12 @@ static LRESULT CALLBACK PanelWndProc(
     __in WPARAM wParam,
     __in LPARAM lParam
     );
+static LRESULT CALLBACK ImageWndProc(
+    __in HWND hWnd,
+    __in UINT uMsg,
+    __in WPARAM wParam,
+    __in LPARAM lParam
+    );
 static HRESULT LocalizeControls(
     __in DWORD cControls,
     __in THEME_CONTROL* rgControls,
@@ -477,6 +486,13 @@ DAPI_(void) ThemeUninitialize()
     {
         ::UnregisterClassW(THEME_WC_PANEL, vhPanelRegisteredModule);
         vhPanelRegisteredModule = NULL;
+    }
+
+    if (vhImageRegisteredModule)
+    {
+        ::UnregisterClassW(THEME_WC_IMAGE, vhImageRegisteredModule);
+        vhImageRegisteredModule = NULL;
+        vpfnImageWndProc = NULL;
     }
 
     if (vgdiToken)
@@ -1598,6 +1614,8 @@ static HRESULT RegisterWindowClasses(
     HRESULT hr = S_OK;
     WNDCLASSW wcHyperlink = { };
     WNDCLASSW wcPanel = { };
+    WNDCLASSW wcImage = { };
+    WNDPROC pfnImageWndProc;
 
     vhCursorHand = ::LoadCursorA(NULL, IDC_HAND);
 
@@ -1629,6 +1647,22 @@ static HRESULT RegisterWindowClasses(
         ThmExitWithLastError(hr, "Failed to register window.");
     }
     vhPanelRegisteredModule = hModule;
+
+    if (!::GetClassInfoW(NULL, WC_STATICW, &wcImage))
+    {
+        ExitWithLastError(hr, "Failed to get static window class.");
+    }
+
+    pfnImageWndProc = wcImage.lpfnWndProc;
+    wcImage.lpfnWndProc = ImageWndProc;
+    wcImage.hInstance = hModule;
+    wcImage.lpszClassName = THEME_WC_IMAGE;
+    if (!::RegisterClassW(&wcImage))
+    {
+        ExitWithLastError(hr, "Failed to register window.");
+    }
+    vhImageRegisteredModule = hModule;
+    vpfnImageWndProc = pfnImageWndProc;
 
 
 LExit:
@@ -4919,6 +4953,17 @@ static LRESULT CALLBACK PanelWndProc(
     return ControlGroupDefWindowProc(pTheme, hWnd, uMsg, wParam, lParam);
 }
 
+static LRESULT CALLBACK ImageWndProc(
+    __in HWND hWnd,
+    __in UINT uMsg,
+    __in WPARAM wParam,
+    __in LPARAM lParam
+    )
+{
+    return uMsg == WM_UPDATEUISTATE
+        ? ::DefWindowProc(hWnd, uMsg, wParam, lParam)
+        : (*vpfnImageWndProc)(hWnd, uMsg, wParam, lParam);
+}
 
 static HRESULT LoadControls(
     __in THEME* pTheme,
@@ -5011,7 +5056,7 @@ static HRESULT LoadControls(
         case THEME_CONTROL_TYPE_IMAGE: // images are basically just owner drawn static controls (so we can draw .jpgs and .pngs instead of just bitmaps).
             if (pControl->hImage || (pTheme->hImage && 0 <= pControl->nSourceX && 0 <= pControl->nSourceY))
             {
-                wzWindowClass = WC_STATICW;
+                wzWindowClass = THEME_WC_IMAGE;
                 dwWindowBits |= SS_OWNERDRAW;
                 pControl->dwInternalStyle |= INTERNAL_CONTROL_STYLE_OWNER_DRAW;
             }
